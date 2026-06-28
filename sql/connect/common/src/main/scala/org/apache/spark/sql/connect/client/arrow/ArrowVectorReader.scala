@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.util.DateTimeConstants.MICROS_PER_SECOND
 import org.apache.spark.sql.catalyst.util.IntervalStringStyles.ANSI_STYLE
 import org.apache.spark.sql.catalyst.util.SparkDateTimeUtils._
 import org.apache.spark.sql.connect.common.types.ops.ConnectTypeOps
-import org.apache.spark.sql.types.{DataType, DayTimeIntervalType, Decimal, UpCastRule, YearMonthIntervalType}
+import org.apache.spark.sql.types.{AnyTimestampNanoType, DataType, DayTimeIntervalType, Decimal, UpCastRule, YearMonthIntervalType}
 import org.apache.spark.sql.util.ArrowUtils
 import org.apache.spark.util.SparkStringUtils
 
@@ -83,6 +83,15 @@ object ArrowVectorReader {
     if (!UpCastRule.canUpCast(vectorDataType, targetDataType)) {
       throw new RuntimeException(
         s"Reading '$targetDataType' values from a ${vector.getClass} instance is not supported.")
+    }
+    // Nanosecond-precision timestamp types (TIMESTAMP_LTZ(p) / TIMESTAMP_NTZ(p), p in [7,9]) are
+    // not yet supported over Spark Connect: there is no Arrow vector type for sub-microsecond
+    // timestamps and no reader implementation here. UpCastRule.canUpCast now returns true for the
+    // micro -> nanos widening direction (SPARK-57303), so the generic guard above no longer
+    // catches this case. Fail fast with a clear message until Connect nanos support is added.
+    if (targetDataType.isInstanceOf[AnyTimestampNanoType]) {
+      throw new RuntimeException(
+        s"Reading '$targetDataType' values over Spark Connect is not yet supported.")
     }
     vector match {
       case v: BitVector => new BitVectorReader(v)
