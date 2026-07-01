@@ -45,7 +45,8 @@ class ArrowVectorReaderSuite extends ConnectFunSuite {
       val ex = intercept[RuntimeException] {
         ArrowVectorReader(TimestampLTZNanosType(9), vector, "UTC")
       }
-      assert(ex.getMessage.contains("not yet supported"),
+      assert(
+        ex.getMessage.contains("not yet supported"),
         s"Expected 'not yet supported' in error message, got: ${ex.getMessage}")
     } finally {
       vector.close()
@@ -58,7 +59,8 @@ class ArrowVectorReaderSuite extends ConnectFunSuite {
       val ex = intercept[RuntimeException] {
         ArrowVectorReader(TimestampNTZNanosType(7), vector, "UTC")
       }
-      assert(ex.getMessage.contains("not yet supported"),
+      assert(
+        ex.getMessage.contains("not yet supported"),
         s"Expected 'not yet supported' in error message, got: ${ex.getMessage}")
     } finally {
       vector.close()
