@@ -39,7 +39,7 @@ class ArrowVectorReaderSuite extends ConnectFunSuite {
     field.createVector(allocator).asInstanceOf[TimeStampMicroTZVector]
   }
 
-  test("SPARK-XXXXX: ArrowVectorReader rejects TimestampLTZNanosType with a clear error") {
+  test("SPARK-57738: ArrowVectorReader rejects TimestampLTZNanosType with a clear error") {
     val vector = microTZVector()
     try {
       val ex = intercept[RuntimeException] {
@@ -52,7 +52,7 @@ class ArrowVectorReaderSuite extends ConnectFunSuite {
     }
   }
 
-  test("SPARK-XXXXX: ArrowVectorReader rejects TimestampNTZNanosType with a clear error") {
+  test("SPARK-57738: ArrowVectorReader rejects TimestampNTZNanosType with a clear error") {
     val vector = microTZVector()
     try {
       val ex = intercept[RuntimeException] {
@@ -65,7 +65,7 @@ class ArrowVectorReaderSuite extends ConnectFunSuite {
     }
   }
 
-  test("SPARK-XXXXX: ArrowVectorReader still succeeds for plain TimestampType") {
+  test("SPARK-57738: ArrowVectorReader still succeeds for plain TimestampType") {
     val vector = microTZVector()
     try {
       val reader = ArrowVectorReader(TimestampType, vector, "UTC")
