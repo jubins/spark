@@ -514,7 +514,7 @@ class DefaultChannelBuilder(ChannelBuilder):
             session = PySparkSession._instantiatedSession
 
             if session is not None:
-                jvm = PySparkSession._instantiatedSession._jvm  # type: ignore[union-attr]
+                jvm = session._jvm
                 return getattr(
                     getattr(
                         jvm,
@@ -1239,7 +1239,7 @@ class SparkConnectClient(object):
         table, schema, metrics, observed_metrics, _ = self._execute_and_fetch(req, observations)
 
         # Create a query execution object.
-        ei = ExecutionInfo(metrics, observed_metrics)
+        ei = ExecutionInfo(metrics, observed_metrics, req.operation_id)
         assert table is not None
         return table, schema, ei
 
@@ -1275,7 +1275,7 @@ class SparkConnectClient(object):
             req, observations, selfDestruct == "true"
         )
         assert table is not None
-        ei = ExecutionInfo(metrics, observed_metrics)
+        ei = ExecutionInfo(metrics, observed_metrics, req.operation_id)
 
         schema = schema or from_arrow_schema(table.schema, prefer_timestamp_ntz=True)
         assert schema is not None and isinstance(schema, StructType)
@@ -1418,7 +1418,7 @@ class SparkConnectClient(object):
             req, observations or {}
         )
         # Create a query execution object.
-        ei = ExecutionInfo(metrics, observed_metrics)
+        ei = ExecutionInfo(metrics, observed_metrics, req.operation_id)
         if data is not None:
             return (data.to_pandas(), properties, ei)
         else:
@@ -1535,7 +1535,9 @@ class SparkConnectClient(object):
                 )
             )
         )
-        if operation_id is not None:
+        if operation_id is None:
+            operation_id = str(uuid.uuid4())
+        else:
             try:
                 uuid.UUID(operation_id, version=4)
             except ValueError as ve:
@@ -1543,7 +1545,7 @@ class SparkConnectClient(object):
                     errorClass="INVALID_OPERATION_UUID_ID",
                     messageParameters={"arg_name": "operation_id", "origin": str(ve)},
                 )
-            req.operation_id = operation_id
+        req.operation_id = operation_id
         self._update_request_with_user_context_extensions(req)
 
         if call_stack_trace := self.__class__._build_call_stack_trace():
@@ -1577,11 +1579,13 @@ class SparkConnectClient(object):
         elif method == "explain":
             req.explain.plan.CopyFrom(cast(pb2.Plan, kwargs.get("plan")))
             explain_mode = kwargs.get("explain_mode")
-            if explain_mode not in ["simple", "extended", "codegen", "cost", "formatted"]:
+            allowed_explain_modes = ["simple", "extended", "codegen", "cost", "formatted"]
+            if explain_mode not in allowed_explain_modes:
                 raise PySparkValueError(
-                    errorClass="UNKNOWN_EXPLAIN_MODE",
+                    errorClass="VALUE_NOT_ALLOWED",
                     messageParameters={
-                        "explain_mode": str(explain_mode),
+                        "arg_name": "explain_mode",
+                        "allowed_values": str(allowed_explain_modes),
                     },
                 )
             if explain_mode == "simple":
@@ -1671,8 +1675,10 @@ class SparkConnectClient(object):
         """
         logger.debug("Execute")
 
+        operation_id = req.operation_id
         for hook in self._session_hooks:
             req = hook.on_execute_plan(req)
+            req.operation_id = operation_id
 
         def handle_response(b: pb2.ExecutePlanResponse) -> None:
             self._verify_response_integrity(b)
@@ -1701,7 +1707,7 @@ class SparkConnectClient(object):
                             for b in self._stub.ExecutePlan(req, metadata=self._builder.metadata()):
                                 handle_response(b)
         except Exception as error:
-            self._handle_error(error)
+            self._handle_error(error, req.operation_id)
 
     def _execute_and_fetch_as_iterator(
         self,
@@ -1722,8 +1728,10 @@ class SparkConnectClient(object):
             # when not at debug log level.
             logger.debug(f"ExecuteAndFetchAsIterator. Request: {self._proto_to_string(req)}")
 
+        operation_id = req.operation_id
         for hook in self._session_hooks:
             req = hook.on_execute_plan(req)
+            req.operation_id = operation_id
 
         num_records = 0
         arrow_batch_chunks_to_assemble: List[bytes] = []
@@ -1930,7 +1938,7 @@ class SparkConnectClient(object):
             self.interrupt_operation(req.operation_id)
             raise kb
         except Exception as error:
-            self._handle_error(error)
+            self._handle_error(error, req.operation_id)
 
     def _execute_and_fetch(
         self,
@@ -2297,7 +2305,7 @@ class SparkConnectClient(object):
         with self.global_user_context_extensions_lock:
             self.global_user_context_extensions = list()
 
-    def _handle_error(self, error: Exception) -> NoReturn:
+    def _handle_error(self, error: Exception, operation_id: Optional[str] = None) -> NoReturn:
         """
         Handle errors that occur during RPC calls.
 
@@ -2318,9 +2326,14 @@ class SparkConnectClient(object):
 
         try:
             self.thread_local.inside_error_handling = True
-            if isinstance(error, grpc.RpcError):
-                self._handle_rpc_error(error)
-            raise error
+            try:
+                if isinstance(error, grpc.RpcError):
+                    self._handle_rpc_error(error)
+                raise error
+            except BaseException as handled_error:
+                if operation_id:
+                    handled_error._operation_id = operation_id  # type: ignore[attr-defined]
+                raise
         finally:
             self.thread_local.inside_error_handling = False
 
